@@ -50,7 +50,6 @@ if (!app && os === "mac") {
   const bundles = (await readdir(parent)).filter((file) => file.endsWith(".app"))
 
   if (bundles.length !== 1) throw new Error(`Expected one .app bundle in ${parent}, found ${bundles.join(", ")}`)
-  await writeUpdateConfig(path.join(parent, bundles[0], "Contents", "Resources"))
   await $`tar -cf ${path.join(out, `opencodefork-desktop-mac-${cli.cpu}.app.tar`)} -C ${parent} ${bundles[0]}`
 }
 

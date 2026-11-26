@@ -1,5 +1,6 @@
-# Builds the OpenCodeFork Windows desktop installer, unsigned. A pushed `v*` tag also publishes it as a GitHub release
-# of this repository. It uses no secrets and publishes nowhere else: no npm, R2 or update feed.
+# Builds the OpenCodeFork desktop app for Windows x64 and macOS arm64, without a developer certificate. A pushed `v*`
+# tag also publishes them as a GitHub release of this repository. It uses no secrets and publishes nowhere else: no
+# npm, R2 or update feed.
 name: opencodefork-desktop
 
 on:
@@ -66,7 +67,7 @@ jobs:
       - name: Pack installer
         working-directory: packages/desktop
         timeout-minutes: 30
-        run: bun run pack && cd ../../dist/desktop && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: bun run pack
         env:
           OPENCODE_TARGET: windows-x64
           OPENCODE_DESKTOP_APP: ${{ runner.temp }}/app
@@ -74,16 +75,97 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: opencodefork-desktop-windows-x64
+          path: dist/desktop/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      OPENCODE_CHANNEL: latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Set version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="2.4.0-local.$GITHUB_RUN_NUMBER"; fi
+          echo "OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          install-flags: --os=darwin --cpu=arm64
+      - name: Test the network policy
+        working-directory: packages/util
+        run: bun test test/network-policy.test.ts
+      - name: Test the permission rules
+        working-directory: packages/core
+        run: bun test --timeout 60000 test/shell-network.test.ts test/permission.test.ts
+      - name: Build CLI
+        working-directory: packages/cli
+        run: bun run build && rm -rf dist/.bun
+        env:
+          OPENCODE_TARGET: darwin-arm64
+          BUN_COMPILE_RELEASE: bun-v1.4.4
+          GH_TOKEN: ${{ github.token }}
+      - name: Build desktop
+        working-directory: packages/desktop
+        run: bun run build
+        env:
+          OPENCODE_TARGET: darwin-arm64
+          NODE_OPTIONS: --max-old-space-size=4096
+      - name: Pack app
+        working-directory: packages/desktop
+        timeout-minutes: 60
+        run: bun run pack
+        env:
+          OPENCODE_TARGET: darwin-arm64
+      # Without a Developer ID, every Mach-O file and bundle is signed ad hoc, deepest first, then the app, as Apple
+      # Silicon runs nothing unsigned. Gatekeeper still treats the download as from an unidentified developer.
+      - name: Sign ad hoc and package
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/mac"
+          mkdir -p "$work"
+          tar -xf dist/desktop/opencodefork-desktop-mac-arm64.app.tar -C "$work"
+          app=$(find "$work" -mindepth 1 -maxdepth 1 -name '*.app' -type d)
+          [ -n "$app" ] || { echo "no .app bundle" >&2; exit 1; }
+          {
+            find "$app/Contents" -type f -print0 | while IFS= read -r -d '' file; do
+              case "$(file -b --mime-type "$file")" in application/x-mach-binary*) printf '%s\n' "$file" ;; esac
+            done
+            find "$app/Contents" -type d \( -name '*.app' -o -name '*.framework' \) -print
+          } | awk -F/ '{ print NF "\t" $0 }' | sort -t "$(printf '\t')" -k1,1nr | cut -f2- | while IFS= read -r item; do
+            codesign --force --sign - "$item"
+          done
+          codesign --force --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          name=$(basename "$app")
+          out="$RUNNER_TEMP/out"
+          mkdir -p "$out"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$out/opencodefork-desktop-mac-arm64.zip"
+          staging=$(mktemp -d)
+          ditto "$app" "$staging/$name"
+          ln -s /Applications "$staging/Applications"
+          hdiutil create -volname "${name%.app}" -srcfolder "$staging" -fs HFS+ -format UDZO -ov "$out/opencodefork-desktop-mac-arm64.dmg"
+          # Start the bundled service once, so a CLI the signing broke fails here and not on a user's Mac.
+          "$app/Contents/Resources/opencode-cli" --version
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencodefork-desktop-macos-arm64
           path: |
-            dist/desktop/*.exe
-            dist/desktop/SHA256SUMS.txt
+            ${{ runner.temp }}/out/*.dmg
+            ${{ runner.temp }}/out/*.zip
           if-no-files-found: error
           retention-days: 14
 
   # Only this job can write to the repository, and it runs none of the build's code.
   release:
     if: github.ref_type == 'tag'
-    needs: windows-x64
+    needs: [windows-x64, macos-arm64]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -92,13 +174,24 @@ jobs:
       - name: Download
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: opencodefork-desktop-windows-x64
+          pattern: opencodefork-desktop-*
+          merge-multiple: true
           path: dist
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/SHA256SUMS.txt \
+          cd dist
+          sha256sum *.exe *.dmg *.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          notes=$(cat <<'EOF'
+          Local-only OpenCodeFork desktop app, built without a developer certificate. Check downloads against SHA256SUMS.txt.
+
+          - Windows x64: `opencodefork-desktop-win-x64.exe`. SmartScreen warns on first run: More info, then Run anyway.
+          - macOS Apple Silicon: `opencodefork-desktop-mac-arm64.dmg` (or `.zip`). It is signed ad hoc and not notarized, so macOS blocks the first launch. After moving it to Applications, run `xattr -dr com.apple.quarantine /Applications/OpenCodeFork.app`, or open it once and allow it under System Settings > Privacy & Security.
+          EOF
+          )
+          gh release create "$GITHUB_REF_NAME" *.exe *.dmg *.zip SHA256SUMS.txt \
             --title "OpenCodeFork $GITHUB_REF_NAME" \
-            --notes "Unsigned Windows x64 installer of the local-only OpenCodeFork desktop app. Check it against SHA256SUMS.txt."
+            --notes "$notes"
