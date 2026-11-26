@@ -12,22 +12,16 @@ import { LayerNode } from "@opencode/util/effect/layer-node"
 import { LayerNodePlatform } from "@opencode/util/effect/app-node-platform"
 import { AppNodeBuilder } from "../src/effect/app-node-builder"
 import { Bus } from "../src/bus"
-import { Config } from "../src/config"
 import { Database } from "../src/database/database"
-import { Flag } from "../src/flag"
-import { Integration } from "../src/integration"
 import { Location } from "../src/location"
 import { LocationServiceMap } from "../src/location-service-map"
 import { ModelsDev } from "../src/models-dev"
 import { Model } from "../src/model"
 import { Plugin } from "../src/plugin"
-import { ModelsDevPlugin } from "../src/plugin/models-dev"
 import { SdkPlugins } from "../src/plugin/sdk"
 import { Provider } from "../src/provider"
 import { AbsolutePath } from "../src/schema"
 import { Watcher } from "../src/filesystem/watcher"
-import { location } from "../test/fixture/location"
-import { providerHost, host, integrationHost } from "../test/plugin/host"
 
 const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "opencode-location-bench-")))
 process.on("exit", () => rmSync(root, { recursive: true, force: true }))
@@ -113,28 +107,3 @@ export const keepLocation = () =>
     }),
   )
 
-// One more models.dev source plugin against its own Provider, Model and Integration states: the
-// shared definitions and per-instance materialization without the rest of a Location graph.
-export const keepPlugin = () =>
-  run(
-    Effect.gen(function* () {
-      const modelsDev = yield* ModelsDev.Service
-      const directory = AbsolutePath.make(path.join(root, "plugins", `instance-${made++}`))
-      const services = LayerNode.group([Provider.node, Model.node, Integration.node, Bus.node, Config.node, Flag.node])
-      const context = yield* Layer.build(
-        AppNodeBuilder.build(services, [
-          Location.node.replace(
-            Layer.succeed(Location.Service, Location.Service.of(location(Location.Ref.make({ directory })))),
-          ),
-          ...replacements,
-        ]),
-      ).pipe(Scope.provide(kept))
-      const providers = yield* Provider.Service.pipe(Effect.provideContext(context))
-      const integration = yield* Integration.Service.pipe(Effect.provideContext(context))
-      yield* ModelsDevPlugin.effect(
-        host({ provider: providerHost(providers), integration: integrationHost(integration) }),
-      ).pipe(Effect.provideService(ModelsDev.Service, modelsDev), Effect.provideContext(context), Scope.provide(kept))
-      yield* integration.list()
-      yield* population.pipe(Effect.provideContext(context))
-    }),
-  )

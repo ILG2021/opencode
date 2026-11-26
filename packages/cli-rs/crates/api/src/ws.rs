@@ -169,6 +169,9 @@ pub fn ticket_url(base: &Url, path: &str, ticket: &str, query: &[(&str, &str)]) 
 
 /// Opens a socket, sending `headers` (for example `authorization`) in the handshake.
 pub async fn connect(url: &Url, headers: &[(String, String)]) -> Result<Stream, Error> {
+    if !crate::policy::allowed(url) {
+        return Err(Error::Io(std::io::Error::new(std::io::ErrorKind::PermissionDenied, crate::policy::blocked(url))));
+    }
     let mut request = url.as_str().into_client_request()?;
     for (name, value) in headers {
         let name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| Error::HttpFormat(error.into()))?;

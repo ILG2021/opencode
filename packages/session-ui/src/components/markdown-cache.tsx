@@ -155,7 +155,11 @@ if (typeof window !== "undefined" && purifier.isSupported) {
       (tag === "svg" && name === "aria-hidden" && /^(true|false)$/.test(attr.attrValue)) ||
       (tag === "path" && name === "d")
 
-    if (!allowed) {
+    // Loading remote media would tell its host about the conversation, so only embedded bytes stay.
+    const remote =
+      /^(?:src|srcset|poster)$/.test(name) && !/^(?:data:|blob:)/i.test(attr.attrValue.trim()) && tag !== "a"
+
+    if (!allowed || remote) {
       attr.keepAttr = false
 
       return

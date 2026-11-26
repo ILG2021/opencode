@@ -5,6 +5,7 @@ import { acquireApplicationLock, configureApplication } from "./lifecycle/config
 import { captureLaunchLinks } from "./lifecycle/launch-links"
 import { startSidecarProbe } from "./service/sidecar-probe"
 import { registerStorageSnapshotHandler } from "./storage/snapshot"
+import { configureNetwork } from "./network"
 import { createEarlyWindow, earlyWindowClosed } from "./windows/early"
 import { rendererAssetsServed } from "./windows/protocol"
 import { registerRendererScheme } from "./windows/scheme"
@@ -14,6 +15,7 @@ import { registerRendererScheme } from "./windows/scheme"
 // hundred milliseconds of module evaluation and layers — loads. Configuration and the scheme must
 // precede ready; the window is created the moment ready fires; everything else is imported after.
 configureApplication()
+configureNetwork()
 
 if (acquireApplicationLock()) {
   captureLaunchLinks()

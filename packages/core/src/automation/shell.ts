@@ -51,7 +51,13 @@ export const authorize = Effect.fnUntraced(function* (
       permission.assert({
         ...request,
         ...(invocation ?? { sessionID: owner.id, agent: agent.id }),
-        metadata: { automation: name, trigger, unattended: true, command: action.command },
+        metadata: {
+          ...("metadata" in request ? request.metadata : undefined),
+          automation: name,
+          trigger,
+          unattended: true,
+          command: action.command,
+        },
       }),
     { discard: true },
   )

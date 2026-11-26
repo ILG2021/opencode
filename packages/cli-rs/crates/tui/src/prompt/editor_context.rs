@@ -593,6 +593,10 @@ fn backoff(attempt: u32) -> Duration {
 type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn open(connection: &Connection) -> Option<Socket> {
+    let url = opencode_api::js::parse_url(connection.url.as_str()).ok()?;
+    if !opencode_api::policy::allowed(&url) {
+        return None;
+    }
     let mut request = connection.url.as_str().into_client_request().ok()?;
     if let Some(token) = &connection.auth_token {
         request.headers_mut().insert("x-claude-code-ide-authorization", HeaderValue::from_str(token).ok()?);

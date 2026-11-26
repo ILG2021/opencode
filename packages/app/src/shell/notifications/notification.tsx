@@ -1,3 +1,4 @@
+import { alwaysAsks } from "@/session/requests/auto-approve-machine"
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
 import { Schema } from "effect"
 import { isSessionNotFoundError, type SessionInfo } from "@opencode/client/promise"
@@ -414,9 +415,14 @@ export function createServerNotificationState(input: {
 
       if (kind !== "permission") return input.data.session.form.list(sessionID)?.some((form) => form.id === requestID)
 
-      if (settings.permissions.autoApproves(projectSettingsKey(input.sdk.scope, session.projectID))) return false
+      const request = input.data.session.permission.list(sessionID)?.find((request) => request.id === requestID)
 
-      return input.data.session.permission.list(sessionID)?.some((request) => request.id === requestID)
+      if (!request) return false
+
+      return (
+        alwaysAsks(request) ||
+        !settings.permissions.autoApproves(projectSettingsKey(input.sdk.scope, session.projectID))
+      )
     }
 
     if (!pending()) return

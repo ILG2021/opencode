@@ -9,6 +9,7 @@ import { EffectFlock } from "./effect-flock.js"
 import { makeGlobalNode } from "./effect/app-node.js"
 import { filesystem } from "./effect/app-node-platform.js"
 import { NpmConfig } from "./npm-config.js"
+import { isAllowedGitRemote, isAllowedURL } from "./network-policy.js"
 
 export class InstallFailedError extends Schema.TaggedError<InstallFailedError>()("NpmInstallFailedError", {
   add: Schema.Array(Schema.String).pipe(Schema.optional),
@@ -84,6 +85,8 @@ type Target =
       readonly type: "git"
       readonly name?: string
       readonly slug: string
+      /** Where Git fetches it from. */
+      readonly remote: string
       readonly mutable: boolean
       readonly follows: boolean
       /** A named ref that may be a branch or a tag. */
@@ -100,6 +103,11 @@ async function parse(pkg: string): Promise<Target | undefined> {
         type: "git",
         ...(result.name ? { name: result.name } : {}),
         slug: gitSlug(pkg),
+        remote:
+          (result.hosted as { https?(options: object): string | undefined } | undefined)?.https?.({
+            noCommittish: true,
+            noGitPlus: true,
+          }) ?? result.fetchSpec ?? result.rawSpec,
         mutable,
         follows: Boolean(result.gitRange),
         ...(mutable && result.gitCommittish ? { ref: result.gitCommittish } : {}),
@@ -119,6 +127,31 @@ async function parse(pkg: string): Promise<Target | undefined> {
   } catch {
     return
   }
+}
+
+/** Whether a package spec that is not a Git spec stays on this machine: a registry name, a local path, or a loopback tarball. */
+async function localSource(pkg: string): Promise<boolean> {
+  const { default: npa } = await import("npm-package-arg")
+  try {
+    const check = (result: { type?: string; fetchSpec?: string | null; subSpec?: unknown }): boolean => {
+      if (result.type === "alias") return check(result.subSpec as typeof result)
+      if (result.type === "remote") return typeof result.fetchSpec === "string" && isAllowedURL(result.fetchSpec)
+      if (result.type === "git") return false
+      return true
+    }
+    return check(npa(pkg))
+  } catch {
+    // npm cannot install a spec it cannot parse either.
+    return true
+  }
+}
+
+/** A lockfile's `resolved` value: a local file, or a loopback registry or Git remote. */
+function allowedResolved(resolved: string) {
+  if (resolved.startsWith("file:")) return true
+  const git = resolved.replace(/^git\+/, "")
+  if (git !== resolved) return isAllowedGitRemote(git.replace(/#.*$/, ""))
+  return isAllowedURL(resolved)
 }
 
 function key(pkg: string, target: Target | undefined) {
@@ -245,8 +278,50 @@ const layer = Layer.effect(
         ...(revision ? { revision } : {}),
       }
     })
+    // Checked before Arborist or pacote start, so a refused source fails with a clear error. Git, which they run as a
+    // separate program, is outside the in-process network policy.
+    const registryAllowed = Effect.fnUntraced(function* (dir: string, specs: readonly string[] = []) {
+      for (const spec of specs) {
+        const target = yield* Effect.promise(() => parse(spec))
+        const allowed =
+          target?.type === "git" ? isAllowedGitRemote(target.remote) : yield* Effect.promise(() => localSource(spec))
+        if (allowed) continue
+        return yield* new InstallFailedError({
+          add: [spec],
+          dir,
+          cause: new Error("Blocked by the local-only network policy: package source"),
+        })
+      }
+      const config = yield* NpmConfig.load(dir)
+      const registries = [
+        yield* NpmConfig.registry(dir),
+        ...Object.entries(config).flatMap(([name, value]) =>
+          name.endsWith(":registry") && typeof value === "string" ? [value] : [],
+        ),
+      ]
+      if (!registries.every((registry) => isAllowedURL(registry)))
+        return yield* new InstallFailedError({
+          dir,
+          cause: new Error("Package installs are blocked; only a registry on this machine can be used"),
+        })
+      // An existing lockfile is installed from the URLs it records, not from the registry.
+      const lock = yield* afs.readJson(path.join(dir, "package-lock.json")).pipe(Effect.option)
+      const packages =
+        Option.isSome(lock) && typeof lock.value === "object" && lock.value !== null
+          ? (lock.value as { packages?: Record<string, { resolved?: unknown }> }).packages ?? {}
+          : {}
+      const remote = Object.values(packages).find(
+        (item) => typeof item?.resolved === "string" && !allowedResolved(item.resolved),
+      )
+      if (remote === undefined) return
+      return yield* new InstallFailedError({
+        dir,
+        cause: new Error(`Blocked by the local-only network policy: lockfile source ${String(remote.resolved)}`),
+      })
+    })
     const reify = (input: { dir: string; config?: string; add?: string[]; update?: boolean }) =>
       Effect.gen(function* () {
+        yield* registryAllowed(input.dir, input.add)
         const { Arborist } = yield* Effect.promise(() => import("@npmcli/arborist"))
         const add = input.add ?? []
         const options = {
@@ -411,6 +486,7 @@ const layer = Layer.effect(
       const installed = generation ? yield* installedRevision(generation, name, target) : undefined
       if (!installed)
         return yield* new InstallFailedError({ dir: root, cause: new Error(`Package is not installed: ${pkg}`) })
+      yield* registryAllowed(root, [pkg])
       const { manifest, resolve } = yield* Effect.promise(() => import("pacote"))
       const options = {
         ...(yield* NpmConfig.load(root)),
@@ -450,6 +526,7 @@ const layer = Layer.effect(
       const root = directory(pkg, target)
       // Only the remote knows whether a ref is a branch or a tag. pacote keeps the ref it resolved, and Git reuses the
       // refs the update check just listed for a few minutes, so this usually doesn't ask the remote again.
+      yield* registryAllowed(root, [pkg])
       const { GitFetcher } = (yield* Effect.promise(() => import("pacote"))) as unknown as {
         GitFetcher: new (
           spec: string,

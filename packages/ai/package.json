@@ -178,13 +178,11 @@
     "typescript": "catalog:"
   },
   "dependencies": {
-    "@aws-sdk/credential-providers": "3.1057.0",
     "@smithy/eventstream-codec": "4.2.14",
     "@smithy/util-utf8": "4.2.2",
     "@opencode/schema": "workspace:*",
     "aws4fetch": "1.0.20",
-    "effect": "catalog:",
-    "google-auth-library": "10.5.0"
+    "effect": "catalog:"
   },
   "repository": {
     "type": "git",

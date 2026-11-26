@@ -1,7 +1,7 @@
 import fs from "fs/promises"
 import path from "path"
 import { pathToFileURL } from "url"
-import { describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Global } from "@opencode/util/global"
@@ -9,6 +9,42 @@ import { Npm } from "@opencode/util/npm"
 import { tmpdir } from "./fixture/tmpdir"
 
 const win = process.platform === "win32"
+
+const defaultRegistry = process.env.npm_config_registry
+
+// Installs are blocked by default; these tests use Git, file and loopback sources under an allowed, unused loopback registry.
+beforeAll(() => {
+  process.env.npm_config_registry = "http://127.0.0.1:9/"
+})
+
+afterAll(() => {
+  if (defaultRegistry === undefined) delete process.env.npm_config_registry
+  else process.env.npm_config_registry = defaultRegistry
+})
+
+test("blocks installs when the registry is not allowed", async () => {
+  await using tmp = await tmpdir()
+  process.env.npm_config_registry = "https://registry.npmjs.org/"
+  const result = await Npm.Service.use((npm) => npm.add("left-pad@1.3.0")).pipe(
+    Effect.flip,
+    Effect.provide(npmLayer(tmp.path)),
+    Effect.runPromise,
+  )
+  process.env.npm_config_registry = "http://127.0.0.1:9/"
+  expect(result.message).toContain("Package installs are blocked")
+})
+
+test("blocks a remote tarball and a remote scoped registry", async () => {
+  await using tmp = await tmpdir()
+  const refused = (spec: string) =>
+    Npm.Service.use((npm) => npm.add(spec)).pipe(Effect.flip, Effect.provide(npmLayer(tmp.path)), Effect.runPromise)
+  expect((await refused("https://evil.test/p.tgz")).message).toContain("package source")
+  process.env.npm_config_registry = "http://127.0.0.1:9/"
+  process.env["npm_config_@acme:registry"] = "https://npm.acme.test/"
+  const scoped = await refused("@acme/x@1.0.0")
+  delete process.env["npm_config_@acme:registry"]
+  expect(scoped.message).toContain("Package installs are blocked")
+})
 
 const writePackage = (dir: string, pkg: Record<string, unknown>) =>
   Bun.write(

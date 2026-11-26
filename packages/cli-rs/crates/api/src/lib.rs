@@ -7,6 +7,7 @@ pub mod events;
 pub mod generated;
 pub mod id;
 pub mod memory;
+pub mod policy;
 pub mod pty;
 pub mod query;
 pub mod sse;

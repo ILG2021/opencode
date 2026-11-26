@@ -6,14 +6,15 @@ const appNames: Record<Channel, string> = {
   local: "OpenCode Dev",
   dev: "OpenCode Dev",
   beta: "OpenCode Beta",
-  prod: "OpenCode",
+  prod: "OpenCodeFork",
 }
 
 const appIDs: Record<Channel, string> = {
   local: "ai.opencode.desktop.dev",
   dev: "ai.opencode.desktop.dev",
   beta: "ai.opencode.desktop.beta",
-  prod: "ai.opencode.desktop",
+  // Its own id keeps the official app's profile, Start Menu entry and install directory apart.
+  prod: "ai.opencodefork.desktop",
 }
 
 // Unpackaged dev runs keep the dev profile directory (`appID`), but use a separate Windows

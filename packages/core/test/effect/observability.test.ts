@@ -1,54 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test"
+import { expect, test } from "bun:test"
 import { NodeFileSystem } from "@effect/platform-node"
 import { Effect, Layer, Logger } from "effect"
 import fs from "fs/promises"
 import os from "os"
 import path from "path"
 import { fileLogger } from "@opencode/util/observability/logging"
-import { resource } from "@opencode/util/observability/otlp"
 
-const otelResourceAttributes = process.env.OTEL_RESOURCE_ATTRIBUTES
-
-afterEach(() => {
-  if (otelResourceAttributes === undefined) delete process.env.OTEL_RESOURCE_ATTRIBUTES
-  else process.env.OTEL_RESOURCE_ATTRIBUTES = otelResourceAttributes
-})
-
-describe("resource", () => {
-  test("parses and decodes OTEL resource attributes", () => {
-    process.env.OTEL_RESOURCE_ATTRIBUTES =
-      "service.namespace=anomalyco,team=platform%2Cobservability,label=hello%3Dworld,key%2Fname=value%20here"
-
-    expect(resource().attributes).toMatchObject({
-      "service.namespace": "anomalyco",
-      team: "platform,observability",
-      label: "hello=world",
-      "key/name": "value here",
-    })
-  })
-
-  test("drops OTEL resource attributes when any entry is invalid", () => {
-    process.env.OTEL_RESOURCE_ATTRIBUTES = "service.namespace=anomalyco,broken"
-
-    expect(resource().attributes["service.namespace"]).toBeUndefined()
-    expect(resource().attributes["opencode.client"]).toBeDefined()
-  })
-
-  test("keeps built-in attributes when env values conflict", () => {
-    process.env.OTEL_RESOURCE_ATTRIBUTES =
-      "opencode.client=web,service.instance.id=override,service.namespace=anomalyco"
-
-    const app = { client: "cli", version: "1.2.3", channel: "beta" }
-    expect(resource(app).attributes).toMatchObject({
-      "opencode.client": "cli",
-      "service.namespace": "anomalyco",
-    })
-    expect(resource(app).attributes["service.instance.id"]).not.toBe("override")
-    expect(resource(app).attributes["opencode.run"]).toMatch(/^[0-9a-f]{8}$/)
-  })
-})
-
-test("falls back to local logging when OTLP initialization fails", async () => {
+test("logs locally whatever OTLP endpoint the environment names", async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-observability-test-"))
   await using _ = {
     async [Symbol.asyncDispose]() {

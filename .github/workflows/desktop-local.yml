@@ -1,0 +1,104 @@
+# Builds the OpenCodeFork Windows desktop installer, unsigned. A pushed `v*` tag also publishes it as a GitHub release
+# of this repository. It uses no secrets and publishes nowhere else: no npm, R2 or update feed.
+name: opencodefork-desktop
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  windows-x64:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      OPENCODE_CHANNEL: latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      # Not a 0.0.0- version, so this is a production build, which must bundle the CLI built here.
+      - name: Set version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version="${GITHUB_REF_NAME#v}"; else version="2.4.0-local.$GITHUB_RUN_NUMBER"; fi
+          echo "OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Set up Bun
+        uses: ./.github/actions/setup-bun
+      - name: Test the network policy
+        working-directory: packages/util
+        run: bun test test/network-policy.test.ts
+      - name: Test the permission rules
+        working-directory: packages/core
+        run: bun test --timeout 60000 test/shell-network.test.ts test/permission.test.ts
+      - name: Build CLI
+        working-directory: packages/cli
+        run: bun run build && rm -rf dist/.bun
+        env:
+          OPENCODE_TARGET: windows-x64-baseline
+          # The official Bun runtime, checked against its release checksums.
+          BUN_COMPILE_RELEASE: bun-v1.4.4
+          GH_TOKEN: ${{ github.token }}
+      - name: Build desktop
+        working-directory: packages/desktop
+        run: bun run build
+        env:
+          OPENCODE_TARGET: windows-x64
+          NODE_OPTIONS: --max-old-space-size=4096
+      # The first pack writes the unpacked app; the second wraps it in the NSIS installer.
+      - name: Pack app
+        working-directory: packages/desktop
+        timeout-minutes: 30
+        run: bun run pack && mv ../../dist/desktop/app "$RUNNER_TEMP/app"
+        env:
+          OPENCODE_TARGET: windows-x64
+      - name: Pack installer
+        working-directory: packages/desktop
+        timeout-minutes: 30
+        run: bun run pack && cd ../../dist/desktop && sha256sum *.exe > SHA256SUMS.txt && cat SHA256SUMS.txt
+        env:
+          OPENCODE_TARGET: windows-x64
+          OPENCODE_DESKTOP_APP: ${{ runner.temp }}/app
+      - name: Upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: opencodefork-desktop-windows-x64
+          path: |
+            dist/desktop/*.exe
+            dist/desktop/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  # Only this job can write to the repository, and it runs none of the build's code.
+  release:
+    if: github.ref_type == 'tag'
+    needs: windows-x64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: opencodefork-desktop-windows-x64
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.exe dist/SHA256SUMS.txt \
+            --title "OpenCodeFork $GITHUB_REF_NAME" \
+            --notes "Unsigned Windows x64 installer of the local-only OpenCodeFork desktop app. Check it against SHA256SUMS.txt."

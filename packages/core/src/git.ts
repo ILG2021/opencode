@@ -7,6 +7,7 @@ import { ChildProcess } from "effect/process"
 import { AbsolutePath, RelativePath } from "./schema.js"
 import { FSUtil } from "@opencode/util/fs-util"
 import { AppProcess } from "@opencode/util/process"
+import { isAllowedGitRemote } from "@opencode/util/network-policy"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { FileDiff } from "@opencode/schema/file-diff"
 import { KeyedMutex } from "./effect/keyed-mutex.js"
@@ -42,6 +43,30 @@ const snapshotConfig = `[core]
 
 export const TreeID = Schema.String.pipe(Schema.brand("Git.TreeID"))
 export type TreeID = typeof TreeID.Type
+
+// A partial clone would otherwise download missing objects from its remote during any command.
+// A repository's fsmonitor is a program its config names, so it is always off. It follows any config the environment
+// already passes, so those entries keep applying.
+function localGitEnv(): Record<string, string> {
+  const count = Number.parseInt(process.env.GIT_CONFIG_COUNT ?? "", 10)
+  const next = Number.isInteger(count) && count > 0 ? count : 0
+  return {
+    GIT_NO_LAZY_FETCH: "1",
+    GIT_CONFIG_COUNT: String(next + 1),
+    [`GIT_CONFIG_KEY_${next}`]: "core.fsmonitor",
+    [`GIT_CONFIG_VALUE_${next}`]: "false",
+  }
+}
+// What clones, fetches and the checkouts after them run with. The remote's host is checked before they start.
+const remoteGitEnv = () => ({
+  ...localGitEnv(),
+  GIT_ALLOW_PROTOCOL: "file:http:https",
+  GIT_TERMINAL_PROMPT: "0",
+  // `.lfsconfig` comes with the repository and can name any host.
+  GIT_LFS_SKIP_SMUDGE: "1",
+})
+// Redirects and advertised bundles could lead to a host that was not checked.
+const remoteGitArgs = ["-c", "http.followRedirects=false", "-c", "transfer.bundleURI=false"]
 
 const temporaryIndexPrefix = "index.opencode-"
 // Like `git gc --auto`, pack once loose objects accumulate, and combine packs before lookups slow down.
@@ -329,9 +354,29 @@ const layer = Layer.effect(
       directory: AbsolutePath,
       args: string[],
     ) {
-      const result = yield* execute(directory, proc, args).pipe(Effect.mapError(spawnFailure(operation, directory)))
+      const result = yield* execute(directory, proc, [...remoteGitArgs, ...args], remoteGitEnv()).pipe(
+        Effect.mapError(spawnFailure(operation, directory)),
+      )
       if (result.exitCode === 0) return
       return yield* commandFailure(operation, directory, result)
+    })
+
+    // Asks Git, so `url.<base>.insteadOf` rewrites are seen. This contacts nothing.
+    const assertRemote = Effect.fnUntraced(function* (
+      name: "clone" | "fetch",
+      directory: AbsolutePath,
+      remoteName: string,
+    ) {
+      const result = yield* execute(directory, proc, ["ls-remote", "--get-url", "--", remoteName]).pipe(
+        Effect.mapError(spawnFailure(name, directory)),
+      )
+      if (result.exitCode !== 0) return yield* commandFailure(name, directory, result)
+      if (isAllowedGitRemote(result.text.trim())) return
+      return yield* new OperationError({
+        operation: name,
+        directory,
+        message: `Blocked by the local-only network policy: Git remote ${remoteName}`,
+      })
     })
 
     const clone = Effect.fn("Git.repo.clone")(function* (input: {
@@ -340,8 +385,11 @@ const layer = Layer.effect(
       branch?: string
       depth?: number
     }) {
-      yield* operation("clone", AbsolutePath.make(path.dirname(input.directory)), [
+      const parent = AbsolutePath.make(path.dirname(input.directory))
+      yield* assertRemote("clone", parent, input.remote)
+      yield* operation("clone", parent, [
         "clone",
+        "--no-recurse-submodules",
         "--depth",
         String(input.depth ?? 100),
         ...(input.branch ? ["--branch", input.branch] : []),
@@ -362,7 +410,21 @@ const layer = Layer.effect(
       repository: Repository,
       input: { prune?: boolean } = {},
     ) {
-      yield* operation("fetch", repository.worktree, ["fetch", "--all", ...(input.prune === false ? [] : ["--prune"])])
+      const remotes = yield* execute(repository.worktree, proc, ["remote"]).pipe(
+        Effect.mapError(spawnFailure("fetch", repository.worktree)),
+      )
+      if (remotes.exitCode !== 0) return yield* commandFailure("fetch", repository.worktree, remotes)
+      yield* Effect.forEach(
+        remotes.text.split("\n").flatMap((line) => line.trim() || []),
+        (name) => assertRemote("fetch", repository.worktree, name),
+        { discard: true },
+      )
+      yield* operation("fetch", repository.worktree, [
+        "fetch",
+        "--no-recurse-submodules",
+        "--all",
+        ...(input.prune === false ? [] : ["--prune"]),
+      ])
     })
 
     const fetchBranch = Effect.fn("Git.sync.fetchBranch")(function* (
@@ -371,7 +433,13 @@ const layer = Layer.effect(
     ) {
       const remoteName = input.remote ?? "origin"
       const spec = `refs/heads/${input.branch}:refs/remotes/${remoteName}/${input.branch}`
-      yield* operation("fetch", repository.worktree, ["fetch", remoteName, input.force === false ? spec : `+${spec}`])
+      yield* assertRemote("fetch", repository.worktree, remoteName)
+      yield* operation("fetch", repository.worktree, [
+        "fetch",
+        "--no-recurse-submodules",
+        remoteName,
+        input.force === false ? spec : `+${spec}`,
+      ])
     })
 
     const checkout = Effect.fn("Git.sync.checkoutRemoteBranch")(function* (
@@ -407,7 +475,7 @@ const layer = Layer.effect(
         .run(
           ChildProcess.make(gitExecutable(), repositoryArgs(repository, args), {
             cwd: repository.worktree,
-            env: options?.index ? { ...options.env, GIT_INDEX_FILE: options.index } : options?.env,
+            env: { ...localGitEnv(), ...options?.env, ...(options?.index ? { GIT_INDEX_FILE: options.index } : {}) },
             extendEnv: true,
           }),
           { stdin: options?.stdin, maxOutputBytes: options?.maxOutputBytes },
@@ -1389,7 +1457,7 @@ const layer = Layer.effect(
       cwd = repository.worktree,
     ) {
       const result = yield* proc
-        .run(ChildProcess.make(gitExecutable(), args, { cwd, extendEnv: true, stdin: "ignore" }))
+        .run(ChildProcess.make(gitExecutable(), args, { cwd, env: localGitEnv(), extendEnv: true, stdin: "ignore" }))
         .pipe(
           Effect.mapError(
             (cause) => new WorktreeError({ operation, directory: worktreeDirectory, message: cause.message, cause }),
@@ -1507,11 +1575,17 @@ function run(cwd: string, proc: AppProcess.Interface, args: string[]) {
   return execute(cwd, proc, args).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, text: "", stderr: "" })))
 }
 
-function execute(cwd: string, proc: AppProcess.Interface, args: string[]) {
+function execute(
+  cwd: string,
+  proc: AppProcess.Interface,
+  args: string[],
+  env: Record<string, string> = localGitEnv(),
+) {
   return proc
     .run(
       ChildProcess.make(gitExecutable(), args, {
         cwd,
+        env,
         extendEnv: true,
         stdin: "ignore",
       }),

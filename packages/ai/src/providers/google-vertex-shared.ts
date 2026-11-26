@@ -1,37 +1,10 @@
-import type { AnyAuthClient, GoogleAuthOptions } from "google-auth-library"
-import { Effect, Redacted } from "effect"
+import { Effect } from "effect"
 import type { ProviderPackage } from "../provider-package.js"
 import { Auth, MissingCredentialError } from "../route/auth.js"
 import type { CompactionOperations, Route } from "../route/client.js"
 import { ProviderConfigurationError, ProviderID, type RequestOptions } from "../schema/index.js"
 
-const SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 const id = ProviderID.make("google-vertex")
-
-export const loadADCClient = async (project?: string) => {
-  const { GoogleAuth } = await import("google-auth-library")
-  // google-auth-library 10.5.0 ignores CLOUDSDK_CONFIG during ADC file discovery.
-  // Fix this in shipped AI code: a repository-level Bun dependency patch would not
-  // reach npm or Bun consumers of the published @opencode/ai package.
-  // Override only the well-known-file lookup: keyFilename bypasses ADC's quota-project
-  // preparation. Keep explicit credentials and metadata fallback in Google's ADC chain.
-  class CloudSDKAuth extends GoogleAuth {
-    override async _tryGetApplicationCredentialsFromWellKnownFile(options?: GoogleAuthOptions["clientOptions"]) {
-      const config = process.env.CLOUDSDK_CONFIG
-      if (!config) return super._tryGetApplicationCredentialsFromWellKnownFile(options)
-      // Keep local filesystem helpers lazy for explicitly authenticated Worker callers;
-      // this ADC-file lookup itself requires a Node-compatible filesystem.
-      const { existsSync } = await import("node:fs")
-      const { homedir } = await import("node:os")
-      const { join } = await import("node:path")
-      const directory = config === "~" ? homedir() : config.startsWith("~/") ? join(homedir(), config.slice(2)) : config
-      const file = join(directory, "application_default_credentials.json")
-      if (!existsSync(file)) return null
-      return this._getApplicationCredentialsFromFilePath(file, options)
-    }
-  }
-  return new CloudSDKAuth({ projectId: project, scopes: [SCOPE] }).getClient()
-}
 
 export type OAuthOptions =
   | { readonly accessToken?: string; readonly auth?: never }
@@ -84,26 +57,11 @@ export const apiKey = (input: ApiKeyOptions & { readonly project?: string; reado
   return process.env.GOOGLE_VERTEX_API_KEY
 }
 
-const adc = (project?: string) => {
-  let client: Promise<AnyAuthClient> | undefined
-  const loadClient = () => {
-    if (client) return client
-    client = loadADCClient(project)
-    return client
-  }
-  return Auth.effect(
-    Effect.tryPromise({
-      try: async () => {
-        const token = await (await loadClient()).getAccessToken()
-        if (!token.token) throw new Error("Google ADC returned an empty access token")
-        return Redacted.make(token.token)
-      },
-      catch: () => new MissingCredentialError("Google Application Default Credentials"),
-    }),
-  ).bearer()
-}
+// Google's credential lookup contacts metadata and token hosts, so this local-only build has none.
+const adc = () =>
+  Auth.effect(Effect.fail(new MissingCredentialError("Google Application Default Credentials"))).bearer()
 
-export const oauth = (input: OAuthOptions, project?: string) => {
+export const oauth = (input: OAuthOptions, _project?: string) => {
   if (input.accessToken !== undefined && input.auth !== undefined)
     throw new ProviderConfigurationError({
       provider: id,
@@ -111,7 +69,7 @@ export const oauth = (input: OAuthOptions, project?: string) => {
     })
   if (input.auth) return input.auth
   if (input.accessToken !== undefined) return Auth.bearer(input.accessToken)
-  return adc(project)
+  return adc()
 }
 
 export const oauthRoute = <Body, Prepared, Compact extends CompactionOperations | undefined>(

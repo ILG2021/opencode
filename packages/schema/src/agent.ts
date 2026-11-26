@@ -44,7 +44,13 @@ export const Info = Schema.Struct({
           mode: "primary",
           hidden: false,
           permissions: [
-            { action: "*", resource: "*", effect: "allow" },
+            { action: "*", resource: "*", effect: "ask" },
+            ...["read", "glob", "grep", "subagent", "skill", "question", "todowrite", "execute", "opencode_*"].map((action) => ({
+              action,
+              resource: "*",
+              effect: "allow" as const,
+            })),
+            { action: "websearch", resource: "*", effect: "deny" },
             { action: "read", resource: "*.env", effect: "ask" },
             { action: "read", resource: "*.env.*", effect: "ask" },
             { action: "read", resource: "*.env.example", effect: "allow" },

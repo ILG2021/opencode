@@ -4,6 +4,7 @@ import { Effect, Result, Schema } from "effect"
 import { FileAccess } from "../file-access.js"
 import type { Permission } from "../permission.js"
 import { Wildcard } from "../util/wildcard.js"
+import { ShellNetwork } from "./network.js"
 import { ShellParse } from "./parse.js"
 
 export class UnverifiableError extends Schema.TaggedError<UnverifiableError>()("ShellPermissions.UnverifiableError", {
@@ -38,7 +39,7 @@ export const requests = Effect.fnUntraced(function* <E>(
     // is never saved as a pattern.
     return [
       { action: "external_directory", resources: ["*"], save: undefined },
-      { action: "shell", resources: [input.command], save: undefined, metadata: { reason: scanned.failure.reason } },
+      { action: "shell", resources: [input.command], save: undefined, metadata: { reason: scanned.failure.reason, network: true } },
     ]
   }
   const parsed = scanned.success
@@ -47,12 +48,23 @@ export const requests = Effect.fnUntraced(function* <E>(
     access.resolve({ path: directory, base: input.target, kind: "directory" }),
   )
   const external = FileAccess.externalDirectoryRequest([input.target, ...directories])
+  const network =
+    ShellNetwork.possible(
+      input.command,
+      parsed.commands.map((command) => command.resource),
+    ) ||
+    // A working directory outside the project, such as a share, already brings an external_directory request that
+    // must reach the user. A project that itself sits on a share is one the user chose to open.
+    ShellNetwork.gitInternal(input.target.absolute) ||
+    (yield* ShellNetwork.networkPath(input.command))
   const command =
-    parsed.commands.length > 0 || input.once
+    parsed.commands.length > 0 || input.once || network
       ? {
           action: "shell",
           resources: parsed.commands.length > 0 ? parsed.commands.map((command) => command.resource) : [input.command],
-          save: parsed.commands.map((command) => command.save),
+          // Such a command is asked about every time, so there is nothing to save.
+          save: network ? undefined : parsed.commands.map((command) => command.save),
+          ...(network ? { metadata: { network: true } } : {}),
         }
       : undefined
   return [external, command].flatMap((request) =>

@@ -25,35 +25,13 @@ export interface DefaultChainOptions {
   readonly profile?: string
 }
 
-/**
- * Resolve credentials through the AWS default provider chain: environment
- * variables, shared config and SSO caches, web identity tokens, process
- * credentials, and container or instance metadata. A fresh chain runs on every
- * request so credentials rotated on disk without an expiration (for example
- * shared-config keys rewritten by a corporate SSO tool) are always re-read;
- * the SDK's own memoization would otherwise pin them for the process lifetime.
- */
-export const defaultChain = (options: DefaultChainOptions): Effect.Effect<Credentials, AIError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const { fromNodeProviderChain } = await import("@aws-sdk/credential-providers")
-      // ignoreCache re-reads shared config and SSO token files, so `aws sso login` takes effect without a restart.
-      const identity = await fromNodeProviderChain({ ignoreCache: true, profile: options.profile })()
-      return {
-        region: options.region,
-        accessKeyId: identity.accessKeyId,
-        secretAccessKey: identity.secretAccessKey,
-        ...(identity.sessionToken === undefined ? {} : { sessionToken: identity.sessionToken }),
-      }
-    },
-    catch: (error) =>
-      new AIError({
-        reason: new AuthenticationError({
-          message: `AWS default credential chain failed: ${ProviderShared.errorText(error)}`,
-          cause: error,
-        }),
-      }),
-  })
+/** The AWS default chain contacts metadata and SSO hosts, so this local-only build has none. */
+export const defaultChain = (_options: DefaultChainOptions): Effect.Effect<Credentials, AIError> =>
+  Effect.fail(
+    new AIError({
+      reason: new AuthenticationError({ message: "The AWS credential chain is disabled in this local-only build" }),
+    }),
+  )
 
 const signRequest = (input: {
   readonly url: string

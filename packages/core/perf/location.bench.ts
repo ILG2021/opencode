@@ -28,13 +28,6 @@ export default bench({
         await ctx.call("keepLocation")
       },
     },
-    "keep a models.dev plugin instance": {
-      primary: "js.heap.retained",
-      metrics: ["cpu.work"],
-      async run(ctx) {
-        await ctx.call("keepPlugin")
-      },
-    },
   },
   async setup(ctx) {
     // The first load pays for module and database setup once; a cold case starts dropped.

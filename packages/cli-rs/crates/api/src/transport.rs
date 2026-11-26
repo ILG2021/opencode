@@ -202,6 +202,8 @@ const MAX_REDIRECTS: usize = 126;
 pub enum FetchError {
     #[error(transparent)]
     Request(#[from] reqwest::Error),
+    #[error("{}", crate::policy::blocked(.0))]
+    Blocked(url::Url),
     #[error("TooManyRedirects: The response redirected too many times")]
     TooManyRedirects,
     #[error("UnsupportedRedirectProtocol: {0}")]
@@ -221,6 +223,9 @@ pub async fn fetch(request: reqwest::RequestBuilder) -> Result<reqwest::Response
     let mut request = request?;
     let mut redirects = 0;
     loop {
+        if !crate::policy::allowed(request.url()) {
+            return Err(FetchError::Blocked(request.url().clone()));
+        }
         let next = request.try_clone();
         let response = client.execute(request).await?;
         let status = response.status().as_u16();
@@ -572,6 +577,18 @@ mod tests {
         assert!(matches!(error, FetchError::Location(crate::js::UrlError::NonAsciiHost(_))), "{error}");
         assert_eq!(error.to_string(), format!("https://B%C3%BCcher.example/: {}", crate::js::ASCII_HOST));
         assert_eq!(log.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn refuses_a_blocked_host_and_a_redirect_to_one() {
+        let log = Log::default();
+        let base = server(&log).await;
+        let blocked = crate::js::parse_url("https://blocked.invalid/x").unwrap();
+        let error = fetch(client().get(blocked.clone())).await.unwrap_err();
+        assert!(matches!(error, FetchError::Blocked(_)), "{error}");
+        let error = fetch(client().get(redirect(&base, 302, blocked.as_str()))).await.unwrap_err();
+        assert!(matches!(error, FetchError::Blocked(_)), "{error}");
+        assert_eq!(log.lock().unwrap().len(), 1);
     }
 
     // Expected (dx-fresh): a server that is not listening is told by its cause, not reqwest's "error sending request"

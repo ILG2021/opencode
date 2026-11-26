@@ -137,7 +137,9 @@ export namespace RipgrepBinary {
             const bytes = yield* HttpClientRequest.get(url).pipe(
               http.execute,
               Effect.flatMap((response) => response.arrayBuffer),
-              Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
+              Effect.mapError(
+                (cause) => new Error("ripgrep is not installed; put rg on PATH (this build downloads nothing)", { cause }),
+              ),
             )
             if (bytes.byteLength === 0) throw new Error(`failed to download ripgrep from ${url}`)
             verify(new Uint8Array(bytes), filename, config.sha256)

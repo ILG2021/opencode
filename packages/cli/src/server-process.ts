@@ -6,17 +6,16 @@ import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Global } from "@opencode/util/global"
 import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_VERSION } from "./version"
 import { AppProcess } from "@opencode/util/process"
+import { isAllowedHost } from "@opencode/util/network-policy"
 import { randomBytes, randomUUID } from "node:crypto"
 import { Effect, Option, Redacted, Schema } from "effect"
 import { PersistentPty } from "@opencode/schema/persistent-pty"
 import { HttpServer } from "effect/http"
-import { NetAddress } from "effect/net"
 import { Env } from "./env"
 import { PortOwner } from "./services/port-owner"
 import { ServiceConfig } from "./services/service-config"
 import { RetainedImage } from "./services/retained-image"
 import { ServiceRegistration } from "./services/service-registration"
-import { RemoteTunnel } from "./services/remote-tunnel"
 import { WebUi } from "./services/web-ui"
 import { databasePath } from "./database-path"
 
@@ -69,7 +68,13 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
       const foreground = options.mode === "default"
       const serviceOptions = options.mode === "service" ? yield* ServiceConfig.options() : undefined
       const config = options.mode === "service" ? yield* ServiceConfig.read() : {}
-      const hostname = options.hostname ?? config.hostname ?? "127.0.0.1"
+      if (options.hostname !== undefined && !isAllowedHost(options.hostname))
+        return yield* Effect.fail(new Error(`This local-only build listens on loopback only, not ${options.hostname}`))
+      // A hostname saved by an earlier build may face the network; the service then stays on loopback.
+      const stored = config.hostname !== undefined && isAllowedHost(config.hostname) ? config.hostname : undefined
+      if (config.hostname !== undefined && stored === undefined)
+        yield* Effect.logWarning("ignoring a saved service hostname that is not loopback", { hostname: config.hostname })
+      const hostname = options.hostname ?? stored ?? "127.0.0.1"
       const port = options.port ?? config.port ?? (options.mode === "service" ? ServiceConfig.defaultPort() : undefined)
       const findIncumbent =
         serviceOptions !== undefined && port !== undefined
@@ -115,15 +120,13 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             path: databasePath(global.data),
           },
           models: {
-            url: process.env.OPENCODE_MODELS_URL,
             file: process.env.OPENCODE_MODELS_PATH,
-            fetch: !truthy(process.env.OPENCODE_DISABLE_MODELS_FETCH),
+            fetch: false,
           },
           config: {
             directory: process.env.OPENCODE_CONFIG_DIR,
-            project: !truthy(
-              process.env.OPENCODE_CONFIG_PROJECT_DISABLE ?? process.env.OPENCODE_DISABLE_PROJECT_CONFIG,
-            ),
+            // A repository's plugins, MCP servers, formatters and permissions would run code outside the network policy.
+            project: false,
             // Config reads .claude only for skills; CLAUDE.md is gated under instructions.
             claude: !(
               truthy(process.env.OPENCODE_DISABLE_CLAUDE_CODE) ||
@@ -193,23 +196,6 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
         }),
       )
       if (server === undefined) return
-      if (serviceOptions !== undefined && config.remote !== undefined && NetAddress.isInetAddress(server.address)) {
-        const bound = NetAddress.formatIp(server.address.address)
-        // A wildcard bind also listens on loopback, which is all the tunnel needs to reach.
-        const target =
-          bound === "0.0.0.0" || bound === "::"
-            ? `127.0.0.1:${server.address.port}`
-            : NetAddress.formatInet(server.address)
-        yield* Effect.forkScoped(
-          RemoteTunnel.run({
-            route: config.remote.route,
-            target,
-            onURL: (url) => {
-              remote.urls = url === undefined ? [] : [url]
-            },
-          }),
-        )
-      }
       const url = HttpServer.formatAddress(server.address)
       console.log(options.mode === "stdio" ? JSON.stringify({ url }) : `server listening on ${url}`)
       if (foreground && !environmentPassword) console.log(`server password ${password}`)

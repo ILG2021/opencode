@@ -115,6 +115,43 @@ describe("Permission", () => {
     }),
   )
 
+  it.effect("asks for a network command despite rules and saved approvals", () =>
+    Effect.gen(function* () {
+      yield* setup([{ action: "*", resource: "*", effect: "allow" }])
+      const saved = yield* PermissionSaved.Service
+      yield* saved.add({ projectID: Project.ID.global, action: "shell", resources: ["*"] })
+      const service = yield* Permission.Service
+      const input = {
+        sessionID: Session.ID.make("ses_test"),
+        action: "shell",
+        resources: ["curl a.test"],
+        metadata: { network: true },
+      }
+      expect((yield* service.ask({ ...input, metadata: {} })).effect).toBe("allow")
+      expect((yield* service.ask(input)).effect).toBe("ask")
+      expect(
+        yield* service.ask(input).pipe(
+          Effect.map((result) => result.effect),
+          Effect.provideService(Permission.Unattended, [{ action: "*", resource: "*", effect: "allow" }]),
+        ),
+      ).toBe("deny")
+    }),
+  )
+
+  it.effect("asks for edits of Git's own files despite rules", () =>
+    Effect.gen(function* () {
+      yield* setup([{ action: "*", resource: "*", effect: "allow" }])
+      const service = yield* Permission.Service
+      const edit = (resource: string) =>
+        service.ask({ sessionID: Session.ID.make("ses_test"), action: "edit", resources: [resource], save: ["*"] })
+      expect((yield* edit("src/a.ts")).effect).toBe("allow")
+      const asked = yield* edit(".git/config")
+      expect(asked.effect).toBe("ask")
+      expect(yield* service.get(asked.id)).toMatchObject({ metadata: { network: true } })
+      expect((yield* service.get(asked.id))?.save).toBeUndefined()
+    }),
+  )
+
   it.effect("evaluates against an explicit agent", () =>
     Effect.gen(function* () {
       yield* setup([{ action: "read", resource: "*", effect: "allow" }])

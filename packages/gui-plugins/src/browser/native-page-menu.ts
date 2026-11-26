@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises"
 import electron, { type BrowserWindow, type WebContents } from "electron"
 import type { Protocol } from "devtools-protocol"
 import type { Cdp } from "./cdp"
+import { openLocal } from "./open-local"
 import { externalAction } from "./address"
 import { pageReports } from "./errors"
 import { pageMenu, menuAddress, type MenuAction, type MenuPolicy } from "./page-menu"
@@ -114,7 +115,7 @@ export function attachPageMenu(
       if (action.type === "address") return electron.clipboard.writeText(url)
 
       if (action.type === "external") {
-        if (externalAction(url, input.policy.local) === "browser") await electron.shell.openExternal(url)
+        if (externalAction(url, input.policy.local) === "browser") await openLocal(url)
 
         return
       }

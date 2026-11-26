@@ -66,7 +66,6 @@ export const info = Skill.Info.make({
     "",
     "- Page load: `trace.start`, `reload`, `trace.stop`, then `trace.analyze` with the file ID `trace.stop` returned.",
     "- JavaScript hot spots: `cpu.start`, the interaction, `cpu.stop`, then `cpu.analyze`.",
-    "- Accessibility, SEO and best practices: `lighthouse`.",
     "",
     "### Find a memory leak",
     "",

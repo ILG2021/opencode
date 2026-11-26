@@ -2,6 +2,11 @@
 <html lang="en" style="background-color: var(--v2-background-bg-deep, #fafafa)">
   <head>
     <meta charset="utf-8" />
+    <!-- Every fetch, image, frame and socket stays on this machine. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' oc: data: blob: http://localhost:* http://127.0.0.1:* http://[::1]:* ws://localhost:* ws://127.0.0.1:* ws://[::1]:*; object-src 'none'; base-uri 'self'; form-action 'self'"
+    />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, interactive-widget=resizes-content, viewport-fit=cover"

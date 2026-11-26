@@ -116,6 +116,11 @@ export function transitionAutoApprove(state: AutoApproveState, event: AutoApprov
   return changed({ ...state, status: "replying" }, [reply(state.sessionID, state.runId, state.attempt)])
 }
 
+/** A command that may use the network is always the user's to answer. */
+export function alwaysAsks(request: { readonly metadata?: Readonly<Record<string, unknown>> }) {
+  return request.metadata?.network === true
+}
+
 // Whether a pending request waits on the user, so the permission dock shows it and every badge counts it.
 // Auto-approve hides it only while a cycle can still answer it.
 export function needsUser(state: AutoApproveState, autoApprove: boolean) {

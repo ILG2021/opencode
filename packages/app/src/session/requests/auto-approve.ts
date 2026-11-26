@@ -9,6 +9,7 @@ import { projectSettingsKey, useSettings } from "@/settings/model"
 import {
   INITIAL_AUTO_APPROVE_STATE,
   INITIAL_AUTO_APPROVE_SWEEP_STATE,
+  alwaysAsks,
   transitionAutoApprove,
   transitionAutoApproveSweep,
   type AutoApproveEffect,
@@ -263,7 +264,7 @@ export function createPermissionAutoApprover(input: { sdk: ServerSDK; data: Data
   }
 
   function approve(permission: PermissionRequest, projectID = input.data.session.get(permission.sessionID)?.projectID) {
-    if (!covers(projectID)) return
+    if (alwaysAsks(permission) || !covers(projectID)) return
     dispatch(permission.id, { type: "approve", sessionID: permission.sessionID, projectID, runId: uuid() })
   }
 

@@ -22,7 +22,7 @@ import { createWebSearchRequest } from "./websearch"
 import { createSessionBackground, mergeJobList } from "@/session/requests/background"
 import { createSteerBackground } from "@/session/requests/steer-background"
 import { useData, useServer } from "@/runtime/server/current"
-import { needsUser } from "./auto-approve-machine"
+import { alwaysAsks, needsUser } from "./auto-approve-machine"
 import {
   INITIAL_PERMISSION_REPLY_STATE,
   isPermissionReplied,
@@ -151,7 +151,7 @@ export function createSessionRequestModel() {
       data.session.list(),
       data.session.permission.list,
       id,
-      (item) => needsUser(autoApprove.state(item.id), enabled) && !isPermissionReplied(replyState(item.id)),
+      (item) => needsUser(autoApprove.state(item.id), enabled && !alwaysAsks(item)) && !isPermissionReplied(replyState(item.id)),
     )
   })
 

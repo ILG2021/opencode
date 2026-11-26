@@ -594,19 +594,6 @@ const Root = Spec.make(typeof OPENCODE_CLI_NAME === "string" ? OPENCODE_CLI_NAME
       description: "Print one-time links to connect a browser or app",
       params: {
         url: serverURLFlag("Use an external HTTP(S) server URL in pairing links"),
-        remote: Flag.Boolean("remote").pipe(
-          Flag.withDescription(
-            "Pair through the OpenTunnel remote address, enabling remote access if needed (exposes the server to the internet)",
-          ),
-          Flag.withDefault(false),
-        ),
-        yes: Flag.Boolean("yes").pipe(
-          Flag.withAlias("y"),
-          Flag.withDescription(
-            "Accept exposing the server to the internet when --remote enables remote access for the first time (required without an interactive terminal)",
-          ),
-          Flag.withDefault(false),
-        ),
       },
     }),
     Spec.make("serve", {

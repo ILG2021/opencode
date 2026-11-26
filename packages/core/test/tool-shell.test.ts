@@ -893,7 +893,7 @@ describe("ShellTool ordinary shell syntax", () => {
     "Write-Output `\n  hello",
     "Write-Output @'\nhello\n'@",
   ]) {
-    test(`PowerShell: ordinary syntax reuses approvals: ${command}`, () =>
+    test(`PowerShell: opaque syntax asks despite approvals: ${command}`, () =>
       withScanner(
         (registry, directory) =>
           Effect.gen(function* () {
@@ -904,8 +904,12 @@ describe("ShellTool ordinary shell syntax", () => {
               action: "shell",
               resources: ["Write-Output *", "Show-Value *"],
             })
-            const result = yield* runPermissionCommand(registry, command, path.join(directory.active, "marker"), [])
-            expect(result.requests).toEqual([])
+            const result = yield* runPermissionCommand(registry, command, path.join(directory.active, "marker"), [
+              "once",
+            ])
+            // Expansions and blocks hide what runs, so saved approvals never settle them.
+            expect(result.requests).toMatchObject([{ action: "shell", metadata: { network: true } }])
+            expect(result.requests[0]?.save).toBeUndefined()
             expect(result.exit).toMatchObject({
               _tag: "Success",
               value: { status: "completed", metadata: { exit: 0 } },
@@ -919,8 +923,6 @@ describe("ShellTool ordinary shell syntax", () => {
 
   for (const [command, pattern] of [
     ["Write-Output\thello", "Write-Output\t*"],
-    ["& 'Write-Output' hello", "& 'Write-Output' *"],
-    ["Write-Output `\n  hello", "Write-Output *"],
   ]) {
     test(`PowerShell: always allow covers repeat execution and preserves exact deny: ${command}`, () =>
       withScanner(

@@ -13,6 +13,7 @@ import { SessionStore } from "./session/store.js"
 import { Wildcard } from "./util/wildcard.js"
 import { PermissionSaved } from "./permission/saved.js"
 import { PluginHooks } from "./plugin/hooks.js"
+import { ShellNetwork } from "./shell/network.js"
 
 const PermissionEffect = Permission.Effect
 export { PermissionEffect as Effect }
@@ -225,6 +226,13 @@ const layer = Layer.effect(
         effect,
       })
       const unattended = yield* Unattended
+      const forced = ShellNetwork.flagged(input.metadata)
+        ? ShellNetwork.message
+        : yield* ShellNetwork.fileRequest(input.action, input.resources)
+      if (event.effect !== "deny" && forced !== undefined)
+        return unattended === undefined
+          ? { effect: "ask" as const, message: forced, forced: true, rules: all }
+          : { effect: "deny" as const, message: `Nobody is present to approve this. ${forced}`, rules: all }
       if (event.effect !== "ask" || unattended === undefined)
         return { effect: event.effect, message: event.message, rules: all }
       const settled = [...all, ...unattended]
@@ -237,18 +245,24 @@ const layer = Layer.effect(
       }
     })
 
-    function request(input: AssertInput, message?: string): Request {
+    function request(input: AssertInput, message?: string, forced = false): Request {
       return {
         id: input.id ?? ID.create(),
         sessionID: input.sessionID,
         action: input.action,
         resources: input.resources,
-        save: input.save,
+        save: forced ? undefined : input.save,
         // Tools copy optional inputs straight into metadata; undefined values are not JSON and would
         // fail the HttpApi response encoder when clients list pending requests.
+        // Clients read `network` to keep auto-approve away from a request that must reach the user.
         metadata:
-          input.metadata &&
-          Object.fromEntries(Object.entries(input.metadata).filter(([, value]) => value !== undefined)),
+          input.metadata || forced
+            ? Object.fromEntries(
+                Object.entries({ ...input.metadata, ...(forced ? { network: true } : {}) }).filter(
+                  ([, value]) => value !== undefined,
+                ),
+              )
+            : undefined,
         source: row(input.source),
         message,
       }
@@ -276,7 +290,7 @@ const layer = Layer.effect(
     const ask = Effect.fn("Permission.ask")(function* (input: AssertInput) {
       if (closed) return { id: input.id ?? ID.create(), effect: "deny" as const }
       const result = yield* evaluateInput(input)
-      const value = request(input, result.message)
+      const value = request(input, result.message, "forced" in result)
       if (result.effect === "ask") yield* create(value, input.agent)
       return { id: value.id, effect: result.effect }
     })
@@ -296,7 +310,7 @@ const layer = Layer.effect(
               })
             }
             if (result.effect === "allow") return
-            const item = yield* create(request(input, result.message), input.agent)
+            const item = yield* create(request(input, result.message, "forced" in result), input.agent)
             return yield* restore(Deferred.await(item.deferred)).pipe(
               // Deliberate defect tunnel: leaves wrap execution in blanket `mapError`, which
               // must not convert a user's decline into model-facing tool output. The decline

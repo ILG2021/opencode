@@ -9,7 +9,8 @@ import { roots } from "#global-roots"
 import { Flock } from "./flock.js"
 import { makeGlobalNode } from "./effect/app-node.js"
 
-const app = "opencode"
+// Its own directories keep the official OpenCode's config, data and service apart.
+const app = "opencodefork"
 const { data, cache, config, state, tmp } = roots(app)
 
 const paths = {

@@ -25,7 +25,6 @@ Screenshots, clicks and hovers work while the tab is hidden; only a full-page sc
 - Diagnostics: `console`, `network.list`, `network.get`.
 - Performance: `trace.start`, `trace.stop`, `trace.analyze`, `cpu.start`, `cpu.stop`, `cpu.analyze`.
 - Memory: `heap.snapshot`, `heap.summary`, `heap.query`, `heap.object`, `heap.compare`.
-- Audits: `lighthouse` (accessibility, SEO, best practices).
 
 The source of truth for inputs, descriptions, and outputs is
 `Browser.Operations` in `@opencode/plugin-browser/rpc`.
@@ -109,8 +108,7 @@ Remote endpoints can use HTTPS and the existing server credentials. A reverse
 proxy must allow long-lived event and attachment requests; the attachment RPC
 stays open rather than sending response-body heartbeats.
 
-Lighthouse audits use snapshot mode without changing device emulation or adding
-an embedded report screenshot; use `browser.screenshot` for images. Trace exports
+Trace exports
 contain the target renderer process, not the whole desktop application. A tab
 process change or trace-buffer loss is reported as an incomplete capture. Heap
 summaries report shallow size, not computed retained size, and do not prove leaks.

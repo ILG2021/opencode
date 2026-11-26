@@ -1,6 +1,7 @@
 export * as BrowserTunnel from "./tunnel.js"
 
 import type { Socket } from "node:net"
+import { isAllowedHost } from "@opencode/util/network-policy"
 import { Effect, Exit } from "effect"
 import { Browser } from "./rpc.js"
 import { BrowserTunnelMachine } from "./tunnel-machine.js"
@@ -25,6 +26,8 @@ export function make() {
     open: Effect.fn("BrowserTunnel.open")(function* (target: Browser.TunnelTarget) {
       const rejected = BrowserTunnelMachine.openError(state)
       if (rejected) return yield* Effect.fail(rejected)
+      if (!isAllowedHost(target.host))
+        return yield* Effect.fail(new Error(`Blocked by the local-only network policy: ${target.host}`))
       const id = crypto.randomUUID()
       dispatch({ type: "open.started", id })
       return yield* Effect.gen(function* () {

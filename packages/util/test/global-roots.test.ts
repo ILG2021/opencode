@@ -39,7 +39,7 @@ describe("global roots", () => {
       data: path.join(home, ".local", "share", "opencode"),
       cache: path.join(home, ".cache", "opencode"),
       config: path.join(home, ".config", "opencode"),
-      state: path.join(home, ".local", "state", "opencode"),
+      state: path.join(home, ".local", "state", "opencodefork"),
       tmp: path.join(os.tmpdir(), "opencode"),
     })
   })

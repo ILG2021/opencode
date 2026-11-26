@@ -650,17 +650,6 @@ export const Operations = [
       classes: Schema.Array(Schema.Struct({ name: short, countDelta: Schema.Int, bytesDelta: Schema.Finite })),
     }),
   ),
-  operation(
-    "lighthouse",
-    "Audit the current tab with Lighthouse for accessibility, SEO and best practices. Does not emulate a device or run a performance benchmark. Returns scores and server-local reports.",
-    tab,
-    Schema.Struct({
-      ...page,
-      ...files,
-      scores: Schema.Array(Schema.Struct({ id: short, title: short, score: Schema.NullOr(Schema.Finite) })),
-      failures: Schema.Array(Schema.Struct({ id: short, title: short, description: text })),
-    }),
-  ),
 ] as const
 
 export type Operation = (typeof Operations)[number]

@@ -2,8 +2,6 @@ import { expect } from "bun:test"
 import { isConflictError, isForbiddenError, isInvalidRequestError, OpenCode } from "@opencode/client"
 import { Identity } from "@opencode/core/machine/identity"
 import { Machine } from "@opencode/core/machine/index"
-import { Iroh } from "@opencode/core/machine/iroh"
-import loadBinding from "@opencode/core/machine/iroh-binding"
 import { Join } from "@opencode/core/machine/join"
 import { Link } from "@opencode/core/machine/link"
 import { MACHINE_LINK_PATH } from "@opencode/protocol/groups/machine"
@@ -27,7 +25,7 @@ const start = Effect.fnUntraced(function* (machines: boolean) {
     fs: { filewatcher: false },
     hostname: "127.0.0.1",
     port: 0,
-  }).pipe(Effect.provideService(Iroh.Testing, { offline: true, load: loadBinding, watch: () => {} }))
+  })
   const base = HttpServer.formatAddress(started.address)
   const link = new URL(MACHINE_LINK_PATH, base)
   link.protocol = "ws:"
@@ -102,8 +100,7 @@ it.live("adds, invites, lists, protects paired machines, and removes machines", 
     const decoded = Option.getOrThrow(Join.decode(first.join))
     expect(first.name).toBe("gpu")
     expect(first.expires).toBe(decoded.expires)
-    // The home's Iroh endpoint is bound by the first join string, which then carries it after the URLs.
-    expect(decoded.reach).toEqual([...reach, { type: "iroh" }])
+    expect(decoded.reach).toEqual(reach)
     expect(first.reach).toEqual(decoded.reach)
     expect(yield* Effect.promise(() => server.api.experimental.machine.list())).toEqual([
       { id: "gpu", online: false, paired: false },

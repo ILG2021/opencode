@@ -1,7 +1,7 @@
 import { Global } from "@opencode/util/global"
 import { AppProcess } from "@opencode/util/process"
 import { EffectFlock } from "@opencode/util/effect-flock"
-import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_LOCAL, OPENCODE_VERSION } from "../version"
+import { OPENCODE_ARTIFACT, OPENCODE_LOCAL, OPENCODE_VERSION } from "../version"
 import { Context, Duration, Effect, FileSystem, Layer, Option, Ref, Schema } from "effect"
 import { ChildProcess } from "effect/process"
 import { parse, type ParseError } from "jsonc-parser"
@@ -147,7 +147,6 @@ const make = Effect.gen(function* () {
   const appProcess = yield* AppProcess.Service
   const flock = yield* EffectFlock.Service
   const installedVersion = yield* Ref.make(OPENCODE_VERSION)
-  const channel = OPENCODE_CHANNEL.replace(/[^a-zA-Z0-9._-]/g, "-")
   const executable = yield* fs.realPath(process.execPath).pipe(Effect.orElseSucceed(() => process.execPath))
   const installedPackage = yield* Effect.gen(function* () {
     const directory = path.dirname(path.dirname(executable))
@@ -194,16 +193,6 @@ const make = Effect.gen(function* () {
       ? path.join(npmBin, "npm")
       : undefined
   const npm = prefixNpm ?? "npm"
-
-  const readPolicy = Effect.fnUntraced(function* () {
-    const values = yield* Effect.forEach(["config.json", "opencode.json", "opencode.jsonc"], (name) =>
-      fs.readFileString(path.join(global.config, name)).pipe(
-        Effect.map(decodePolicy),
-        Effect.orElseSucceed(() => undefined),
-      ),
-    )
-    return values.findLast((value) => value !== undefined) ?? "notify"
-  })
 
   const exec = Effect.fnUntraced(function* (command: string[], timeout: Duration.Input = "30 seconds") {
     // The prefix's npm and the package's postinstall run `node` from PATH, which may be missing or belong to another
@@ -312,98 +301,17 @@ const make = Effect.gen(function* () {
     }
   }
 
-  const release = Effect.fnUntraced(function* (method?: Method) {
-    const distribution = method === "brew" ? "homebrew" : "npm"
-    // Homebrew Core builds its formula on its own schedule, so the tap release does not describe it.
-    const core = method === "brew" && installedFormula === "opencode"
-    const response = yield* Effect.tryPromise({
-      try: (signal) =>
-        fetch(
-          core
-            ? "https://formulae.brew.sh/api/formula/opencode.json"
-            : `https://opencode.ai/update/api/${encodeURIComponent(channel)}/${encodeURIComponent(OPENCODE_ARTIFACT)}/${distribution}?current=${encodeURIComponent(OPENCODE_VERSION)}`,
-          {
-            signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-          },
-        ),
-      catch: (cause) =>
-        new UpgradeError(
-          {
-            title: "Could not check for OpenCode updates",
-            detail: errorDetail(cause),
-            retry: "Check your network, then run opencode upgrade again.",
-          },
-          { cause },
-        ),
-    })
-    if (!response.ok)
-      return yield* Effect.fail(
-        new UpgradeError({
-          title: "Could not check for OpenCode updates",
-          detail: `The update service returned HTTP ${response.status}.`,
-          retry: "Try again in a few minutes.",
-        }),
-      )
-    const data: { version?: string; metadata?: { package?: string }; versions?: { stable?: string } } =
-      yield* Effect.tryPromise({
-        try: () => response.json(),
-        catch: (cause) =>
-          new UpgradeError(
-            {
-              title: "Could not read the OpenCode update information",
-              detail: errorDetail(cause),
-              retry: "Try again in a few minutes.",
-            },
-            { cause },
-          ),
-      })
-    const version = core ? data.versions?.stable : data.version
-    const packageName = core ? "opencode" : data.metadata?.package
-    if (!version || !packageName)
-      return yield* Effect.fail(
-        new UpgradeError({
-          title: "Could not read the OpenCode update information",
-          detail: "The update service returned incomplete release information.",
-          retry: "Try again in a few minutes.",
-        }),
-      )
-    return { package: packageName, version }
-  })
-
-  // WinGet moderates every submission, so only its own index knows which release it can install.
-  const wingetVersion = Effect.fnUntraced(function* () {
-    const failure = (detail: string, cause?: unknown) =>
-      new UpgradeError(
-        {
-          title: "Could not check for OpenCode updates",
-          detail,
-          command: ["winget", "search", ...wingetArgs].join(" "),
-          retry: "Fix the issue above, then run opencode upgrade again.",
-        },
-        cause === undefined ? undefined : { cause },
-      )
-    const result = yield* exec(["winget", "search", ...wingetArgs], "1 minute").pipe(
-      Effect.mapError((cause) => failure(errorDetail(cause), cause)),
+  // This build never contacts an update service.
+  const release = (_method?: Method): Effect.Effect<{ package: string; version: string }, UpgradeError> =>
+    Effect.fail(
+      new UpgradeError({
+        title: "Updates are disabled in this local-only build",
+        detail: "OpenCode does not contact an update service.",
+        retry: "Install a new version manually.",
+      }),
     )
-    // Column headers are localized, but the result row always lists the identifier followed by the version.
-    const version = result.stdout
-      .split(/\r?\n|\r/)
-      .map((line) => line.trim().split(/\s+/))
-      .flatMap((tokens) => {
-        const index = tokens.findIndex((token) => token.toLowerCase() === wingetPackage.toLowerCase())
-        return index === -1 ? [] : tokens.slice(index + 1, index + 2)
-      })
-      .find((token) => parseReleaseVersion(token))
-    if (result.code !== 0 || !version) return yield* Effect.fail(failure(resultDetail(result)))
-    return version
-  })
 
-  const latest = (selected?: Method) =>
-    (selected ? Effect.succeed(selected) : method()).pipe(
-      Effect.flatMap((method) =>
-        method === "winget" ? wingetVersion() : release(method).pipe(Effect.map((data) => data.version)),
-      ),
-    )
+  const latest = (selected?: Method) => release(selected).pipe(Effect.map((data) => data.version))
 
   const managedError = (owner: { name: string; command: string }, target: string) =>
     new UpgradeError({
@@ -481,6 +389,7 @@ const make = Effect.gen(function* () {
   }
 
   const upgrade = Effect.fnUntraced(function* (method: Method, input: string) {
+    yield* release(method)
     if (!parseReleaseVersion(input)) return yield* Effect.fail(new Error(`Invalid version: ${input}`))
     const version = input.trim().replace(/^v/, "")
     const packageName =
@@ -604,36 +513,6 @@ const make = Effect.gen(function* () {
       )
   })
 
-  const inspect = Effect.fnUntraced(function* () {
-    if (OPENCODE_LOCAL || ["1", "true"].includes(process.env.OPENCODE_DISABLE_AUTOUPDATE?.toLowerCase() ?? "")) {
-      yield* Effect.logInfo("update check skipped", {
-        reason: OPENCODE_LOCAL ? "local-install" : "disabled",
-        version: OPENCODE_VERSION,
-        channel: OPENCODE_CHANNEL,
-      })
-      return undefined
-    }
-    const policy = yield* readPolicy()
-    if (policy === "disable") {
-      yield* Effect.logInfo("update check skipped", { reason: "policy-disabled" })
-      return undefined
-    }
-
-    const current = yield* Ref.get(installedVersion)
-    const version = yield* latest()
-    yield* Effect.logInfo("update check", {
-      current,
-      latest: version,
-    })
-    const next = action(current, version, policy)
-    if (next === "none") {
-      yield* Effect.logInfo("update check done", { action: "up-to-date" })
-      return undefined
-    }
-    yield* Effect.logInfo("OpenCode update available", { current, latest: version, action: next })
-    return { policy, version }
-  })
-
   const install = Effect.fnUntraced(function* (version: string) {
     const detected = yield* method()
     if (!detected) {
@@ -692,17 +571,7 @@ const make = Effect.gen(function* () {
     return { type: "available" as const, version }
   })
 
-  const run = Effect.fn("cli.updater.run")(
-    function* (onInstall: (version: string) => void = () => {}) {
-      const result = yield* inspect()
-      if (!result) return undefined
-      if (result.policy === "notify") return { type: "available" as const, version: result.version }
-      onInstall(result.version)
-      if (!(yield* install(result.version))) return yield* Effect.fail(new Error("Installation method not found"))
-      return { type: "installed" as const, version: result.version }
-    },
-    Effect.catch((error) => Effect.logWarning("update check failed", { error }).pipe(Effect.as(undefined))),
-  )
+  const run = (_onInstall?: (version: string) => void) => Effect.succeed<RunResult | undefined>(undefined)
 
   return Service.of({ run, check, apply, method, managed, latest, upgrade, removal })
 })

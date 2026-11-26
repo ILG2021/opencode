@@ -208,7 +208,8 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
       const result = yield* proc.run(
         ChildProcess.make(gitExecutable(), [...cfg, ...args], {
           cwd: opts.cwd,
-          env,
+          // A partial clone would otherwise download missing objects from its remote.
+          env: { GIT_NO_LAZY_FETCH: "1", ...env },
           extendEnv: true,
           stdin: "ignore",
         }),
@@ -384,7 +385,7 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
 
   const diff = Effect.fn("VcsGit.diffNames")(function* (cwd: string, ref: string, target?: string) {
     const result = yield* run(
-      ["diff", "--no-ext-diff", "--no-renames", "--name-status", "-z", ref, ...(target ? [target] : []), "--", "."],
+      ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--name-status", "-z", ref, ...(target ? [target] : []), "--", "."],
       { cwd },
     )
     if (result.exitCode !== 0) return yield* new DiffError({ message: "Unable to list Git changes" })
@@ -400,7 +401,7 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
   const stats = Effect.fn("VcsGit.stats")(function* (cwd: string, ref: string, target?: string) {
     return numstat(
       yield* text(
-        ["diff", "--no-ext-diff", "--no-renames", "--numstat", "-z", ref, ...(target ? [target] : []), "--", "."],
+        ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z", ref, ...(target ? [target] : []), "--", "."],
         { cwd },
       ),
     )
@@ -417,7 +418,7 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
         "diff",
         ...(mode.noIndex ? ["--no-index"] : []),
         "--patch",
-        "--no-ext-diff",
+        "--no-ext-diff", "--no-textconv",
         "--no-renames",
         `--unified=${options?.context ?? 3}`,
         ...args,
@@ -486,7 +487,7 @@ function makeGit(proc: AppProcess.Interface, env?: Record<string, string>) {
   })
 
   const worktreeStats = Effect.fn("VcsGit.worktreeStats")(function* (cwd: string) {
-    return numstat(yield* text(["diff", "--no-ext-diff", "--no-renames", "--numstat", "-z"], { cwd }))
+    return numstat(yield* text(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--numstat", "-z"], { cwd }))
   })
 
   const worktreePatch = Effect.fn("VcsGit.worktreePatch")(function* (cwd: string, options?: PatchOptions) {

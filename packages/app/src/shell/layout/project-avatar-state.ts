@@ -2,7 +2,7 @@ import { createMemo, type Accessor } from "solid-js"
 import type { SessionInfo } from "@opencode/client/promise"
 import { useGlobal, useServerCtx, type ServerCtx } from "@/runtime/server/runtime"
 import { sessionPermissionRequest, sessionFormRequest } from "@/session/requests/session-request-tree"
-import { needsUser } from "@/session/requests/auto-approve-machine"
+import { alwaysAsks, needsUser } from "@/session/requests/auto-approve-machine"
 import { ServerConnection } from "@/runtime/server/registry"
 import { projectSettingsKey, useSettings } from "@/settings/model"
 import { useTabs } from "@/shell/tabs/tabs"
@@ -63,7 +63,7 @@ export function sessionRequests(ctx: ServerCtx, sessionId: string, root: boolean
 
   return {
     permission: sessionPermissionRequest(sessions, data.session.permission.list, sessionId, (item) =>
-      needsUser(ctx.autoApprove.state(item.id), autoApprove),
+      needsUser(ctx.autoApprove.state(item.id), autoApprove && !alwaysAsks(item)),
     ),
     form: sessionFormRequest(sessions, data.session.form.list, sessionId),
   }

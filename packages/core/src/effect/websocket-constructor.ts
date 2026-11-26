@@ -1,5 +1,6 @@
 // The platform barrel also exposes Redis and its optional native hash loader, which workerd cannot resolve.
 import { WebSocket as NodeWebSocket } from "@effect/platform-node/NodeWS"
+import { assertAllowed } from "@opencode/util/network-policy"
 import { HttpProxyAgent } from "http-proxy-agent"
 import { HttpsProxyAgent } from "https-proxy-agent"
 import { Layer } from "effect"
@@ -56,6 +57,8 @@ const proxyAgent = (url: string, selectedProxy: string | undefined) => {
 }
 
 const layer = Layer.succeed(Socket.WebSocketConstructor, (url, input) => {
+  // `ws` is not the global WebSocket the network policy replaces.
+  assertAllowed(url)
   const config = constructorOptions(input)
   const selectedProxy = proxy(url)
   // Keep trust on the runtime store so NODE_EXTRA_CA_CERTS remains additive.

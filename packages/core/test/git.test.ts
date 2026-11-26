@@ -51,6 +51,26 @@ describe("Git", () => {
     ),
   )
 
+  it.live("blocks remotes outside the network policy, also through insteadOf", () =>
+    withRemote((fixture) =>
+      Effect.gen(function* () {
+        const git = yield* Git.Service
+        for (const remote of ["https://evil.test/a.git", "https://github.com/a/b.git", "git@github.com:a/b.git", "ssh://git@github.com/a/b", "ext::sh -c id"]) {
+          const directory = AbsolutePath.make(path.join(fixture.root, "blocked"))
+          const error = yield* git.repo.clone({ remote, directory }).pipe(Effect.flip)
+          expect(error.message).toContain("local-only network policy")
+        }
+        const target = AbsolutePath.make(path.join(fixture.root, "checkout"))
+        const repository = yield* git.repo.clone({ remote: fixture.remote, directory: target })
+        yield* Effect.promise(() => $`git config url.https://evil.test/.insteadOf ${fixture.remote}`.cwd(target).quiet())
+        const all = yield* git.sync.fetchRemotes(repository).pipe(Effect.flip)
+        expect(all.message).toContain("local-only network policy")
+        const one = yield* git.sync.fetchBranch(repository, { branch: "main" }).pipe(Effect.flip)
+        expect(one.message).toContain("local-only network policy")
+      }),
+    ),
+  )
+
   it.live("fetches, checks out, and resets remote changes", () =>
     withRemote((fixture) =>
       Effect.gen(function* () {

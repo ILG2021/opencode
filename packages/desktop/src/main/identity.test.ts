@@ -19,9 +19,9 @@ test.each([
   {
     channel: "prod",
     packaged: true,
-    appName: "OpenCode",
-    appID: "ai.opencode.desktop",
-    appUserModelID: "ai.opencode.desktop",
+    appName: "OpenCodeFork",
+    appID: "ai.opencodefork.desktop",
+    appUserModelID: "ai.opencodefork.desktop",
   },
   {
     channel: "local",

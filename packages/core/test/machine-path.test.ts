@@ -195,7 +195,7 @@ const slash = (value: string) => value.replaceAll("\\", "/")
 const on = testEffect(Layer.succeed(Flag.Overrides, "machines"))
 const off = testEffect(Layer.succeed(Flag.Overrides, "-machines"))
 
-on.live("reads, writes and runs commands on a paired machine without requesting approval under default rules", () =>
+on.live("reads, writes and runs commands on a paired machine without requesting approval once edits are allowed", () =>
   withTempDir((tmp) =>
     Effect.gen(function* () {
       const database = yield* Database.Service
@@ -217,7 +217,11 @@ on.live("reads, writes and runs commands on a paired machine without requesting 
         .run()
         .pipe(Effect.orDie)
       const agents = yield* Agent.Service
-      yield* agents.transform((editor) => editor.update(toolIdentity.agent, () => {}))
+      yield* agents.transform((editor) =>
+        editor.update(toolIdentity.agent, (agent) => {
+          agent.permissions.push({ action: "edit", resource: "*", effect: "allow" })
+        }),
+      )
       const bus = yield* Bus.Service
       const prompts: string[] = []
       const unsubscribe = yield* bus.listen((event) =>

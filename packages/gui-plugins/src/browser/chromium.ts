@@ -12,6 +12,7 @@ import type { Protocol } from "devtools-protocol"
 import { Schema } from "effect"
 import type { Embeds } from "@opencode/plugin/gui/main"
 import { captureCoordinator, captureScale, cropPixels, FULL_PAGE_DEADLINE_MS, jpegFits, pngFits, undrawable, undrawableMessage } from "./capture"
+import { openLocal } from "./open-local"
 import { createCdp, abortError, waitFor } from "./cdp"
 import { navigationDeadline } from "./navigation-deadline"
 import { attachChildren, releaseWorker } from "./child-targets"
@@ -588,7 +589,7 @@ export function createBrowserPage(
 
   const notices = noticeActions((notice, token) => options.refused(notice, token, destinationOrigin(contents.getURL())), {
     tab: options.menu.open,
-    app: (url) => electron.shell.openExternal(url),
+    app: (url) => openLocal(url),
     copy: (url) => electron.clipboard.writeText(url),
   })
 
@@ -1228,7 +1229,7 @@ export function createBrowserPage(
 
     if (!target || target.url !== expected) throw new Error("browser.menu.failed")
 
-    if (target.kind === "web") return electron.shell.openExternal(target.url)
+    if (target.kind === "web") return openLocal(target.url)
 
     const actual = contents.getURL()
     const launch = await defaultBrowser()
@@ -2077,16 +2078,6 @@ export function createBrowserPage(
       case "heap.object":
       case "heap.compare":
         return result({ tab: state(), ...(await profiling.analyze(action)) })
-      case "lighthouse": {
-        const { audit } = await import("./lighthouse")
-        const report = await audit(contents, files, cdp, captureSources)
-
-        return result(
-          { tab: state(), scores: report.scores, failures: report.failures },
-          await Promise.all(report.files.map(transfer)),
-        )
-      }
-
       default:
         throw new Error(
           "This operation was routed to a page instead of the tab manager. Report a desktop/plugin routing mismatch; changing tab IDs or repeating the operation will not fix it.",
@@ -2128,7 +2119,7 @@ export function createBrowserPage(
 
     const urls = await Promise.all(frameIDs.map(async (id) => (await agentFrameOf(id)).url))
 
-    const capture = ["screenshot", "lighthouse", "trace.start", "cpu.start", "heap.snapshot"].includes(action.type)
+    const capture = ["screenshot", "trace.start", "cpu.start", "heap.snapshot"].includes(action.type)
 
     return {
       resources: [
