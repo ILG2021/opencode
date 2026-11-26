@@ -35,9 +35,9 @@ function fail(message: string) {
   return { _tag: "fail" as const, error: new Error(message) }
 }
 
-/** The default registration file. */
+/** The default registration file. The CLI writes it under its own app directory, `opencodefork`. */
 export function fallback() {
-  return join(process.env["XDG_STATE_HOME"] ?? join(homedir(), ".local", "state"), "opencode", "service.json")
+  return join(process.env["XDG_STATE_HOME"] ?? join(homedir(), ".local", "state"), "opencodefork", "service.json")
 }
 
 /** Whether two registrations describe the same service instance. */

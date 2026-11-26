@@ -879,3 +879,9 @@ async function expectPortAvailable(port: number) {
   const server = Bun.serve({ hostname: "127.0.0.1", port, fetch: () => new Response() })
   await server.stop(true)
 }
+
+// The desktop app waits for the registration file where the client looks for it.
+test("the client looks for the service registration where the service writes it", async () => {
+  const { fallback } = await import("../../client/src/service-probe.ts")
+  expect(fallback()).toBe(path.join(Global.Path.state, "service.json"))
+})
